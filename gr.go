@@ -1,7 +1,4 @@
-// Package gr provides high-speed QR encode/decode targeting <8ms each at ~1500 bytes.
-// Encode: payload → 1080×1080 grayscale frame (or [][]bool bitmap).
-// Decode: 1080×1080 grayscale frame → payload.
-// Error correction: Low (max capacity ~2953 bytes binary mode).
+// Package gr provides high-speed QR encode/decode with configurable frame size and ECC level.
 package gr
 
 import (
@@ -12,40 +9,113 @@ import (
 	rsciiqr "rsc.io/qr"
 )
 
+// ECCLevel controls QR error correction level (capacity vs resilience trade-off).
+type ECCLevel int
+
 const (
-	FrameWidth  = 1080
-	FrameHeight = 1080
+	ECCLow      ECCLevel = iota // L — max capacity (~2953 bytes)
+	ECCMedium                   // M — ~25% recovery
+	ECCQuartile                 // Q — ~50% recovery
+	ECCHigh                     // H — ~65% recovery, min capacity (~1273 bytes)
 )
 
-// Encode encodes payload into a 1080×1080 grayscale frame (1 byte/pixel, 0=black 255=white).
-// The QR is centered with quiet zone. Uses Low ECC for maximum capacity (~2953 bytes).
-func Encode(payload []byte) ([]byte, error) {
+// Config configures a QR Codec.
+type Config struct {
+	// FrameW, FrameH — output frame dimensions in pixels. Default: 1080×1080.
+	FrameW, FrameH int
+
+	// Margin — pixel margin around the QR on each side. Default: 20.
+	Margin int
+
+	// ECC — error correction level. Default: ECCLow (max payload).
+	ECC ECCLevel
+}
+
+// DefaultConfig is the fastest, highest-capacity config for screen-to-screen transfer.
+var DefaultConfig = Config{
+	FrameW: 1080,
+	FrameH: 1080,
+	Margin: 20,
+	ECC:    ECCLow,
+}
+
+// Codec encodes and decodes QR frames with a fixed config.
+type Codec struct {
+	cfg Config
+}
+
+// New creates a Codec. Zero-value fields in cfg fall back to DefaultConfig values.
+func New(cfg Config) (*Codec, error) {
+	if cfg.FrameW <= 0 {
+		cfg.FrameW = DefaultConfig.FrameW
+	}
+	if cfg.FrameH <= 0 {
+		cfg.FrameH = DefaultConfig.FrameH
+	}
+	if cfg.Margin < 0 {
+		cfg.Margin = DefaultConfig.Margin
+	}
+	return &Codec{cfg: cfg}, nil
+}
+
+// MaxPayload returns the approximate maximum payload in bytes for this config.
+// Exact limit depends on QR version selected at encode time.
+func (c *Codec) MaxPayload() int {
+	switch c.cfg.ECC {
+	case ECCHigh:
+		return 1273
+	case ECCQuartile:
+		return 1663
+	case ECCMedium:
+		return 2331
+	default:
+		return 2953
+	}
+}
+
+// Info returns a human-readable summary of the codec config.
+func (c *Codec) Info() string {
+	eccName := [...]string{"Low", "Medium", "Quartile", "High"}[c.cfg.ECC]
+	return fmt.Sprintf("gr: frame=%dx%d  margin=%d  ECC=%s  maxPayload=%d bytes",
+		c.cfg.FrameW, c.cfg.FrameH, c.cfg.Margin, eccName, c.MaxPayload())
+}
+
+// Encode encodes payload into a grayscale frame of FrameW×FrameH pixels (1 byte/pixel).
+// 0 = black, 255 = white. QR is centered with quiet zone.
+func (c *Codec) Encode(payload []byte) ([]byte, error) {
 	if len(payload) == 0 {
 		return nil, fmt.Errorf("gr: empty payload")
 	}
-	code, err := rsciiqr.Encode(string(payload), rsciiqr.L)
+	level := toRscLevel(c.cfg.ECC)
+	code, err := rsciiqr.Encode(string(payload), level)
 	if err != nil {
 		return nil, fmt.Errorf("gr: encode: %w", err)
 	}
-	// code.Size is the module count (excluding quiet zone already embedded).
-	// rsc.io/qr includes a 4-module quiet zone in its bitmap coordinates.
-	modules := code.Size + 8 // includes 4-module quiet zone on each side
 
-	scale := (FrameWidth - 40) / modules
+	// rsc.io/qr: Black(x,y) valid for x,y in [-4, Size+4)
+	// modules including quiet zone = Size + 8
+	modules := code.Size + 8
+
+	w, h := c.cfg.FrameW, c.cfg.FrameH
+	margin := c.cfg.Margin
+
+	scaleX := (w - margin*2) / modules
+	scaleY := (h - margin*2) / modules
+	scale := min(scaleX, scaleY)
 	if scale < 1 {
 		scale = 1
 	}
-	qrSize := modules * scale
-	offsetX := (FrameWidth - qrSize) / 2
-	offsetY := (FrameHeight - qrSize) / 2
 
-	frame := make([]byte, FrameWidth*FrameHeight)
+	qrW := modules * scale
+	qrH := modules * scale
+	offsetX := (w - qrW) / 2
+	offsetY := (h - qrH) / 2
+
+	frame := make([]byte, w*h)
 	for i := range frame {
 		frame[i] = 255
 	}
 
-	// rsc.io/qr renders with 4-module quiet zone offset: pixel (x,y) maps to module (x-4, y-4).
-	// Black() accepts coordinates in [0, Size+8) where 0..3 and Size+4..Size+7 are quiet zone.
 	for row := 0; row < modules; row++ {
 		y0 := offsetY + row*scale
 		for col := 0; col < modules; col++ {
@@ -54,7 +124,7 @@ func Encode(payload []byte) ([]byte, error) {
 			}
 			x0 := offsetX + col*scale
 			for dy := 0; dy < scale; dy++ {
-				base := (y0+dy)*FrameWidth + x0
+				base := (y0+dy)*w + x0
 				for dx := 0; dx < scale; dx++ {
 					frame[base+dx] = 0
 				}
@@ -64,10 +134,9 @@ func Encode(payload []byte) ([]byte, error) {
 	return frame, nil
 }
 
-// EncodeBitmap returns a raw [][]bool module grid (including quiet zone) for callers
-// that render themselves.
-func EncodeBitmap(payload []byte) ([][]bool, error) {
-	code, err := rsciiqr.Encode(string(payload), rsciiqr.L)
+// EncodeBitmap returns the raw [][]bool module grid (with quiet zone) for custom rendering.
+func (c *Codec) EncodeBitmap(payload []byte) ([][]bool, error) {
+	code, err := rsciiqr.Encode(string(payload), toRscLevel(c.cfg.ECC))
 	if err != nil {
 		return nil, err
 	}
@@ -82,21 +151,18 @@ func EncodeBitmap(payload []byte) ([][]bool, error) {
 	return bmp, nil
 }
 
-// Decode decodes a QR code from a 1080×1080 grayscale frame.
-// Uses PURE_BARCODE hint — assumes QR is cleanly rendered (no adaptive threshold).
-func Decode(frame []byte) ([]byte, error) {
-	if len(frame) != FrameWidth*FrameHeight {
-		return nil, fmt.Errorf("gr: decode: expected %d bytes, got %d", FrameWidth*FrameHeight, len(frame))
+// Decode decodes a QR code from a FrameW×FrameH grayscale frame.
+// Uses PURE_BARCODE fast path; falls back to GlobalHistogram on failure.
+func (c *Codec) Decode(frame []byte) ([]byte, error) {
+	w, h := c.cfg.FrameW, c.cfg.FrameH
+	if len(frame) != w*h {
+		return nil, fmt.Errorf("gr: decode: expected %d bytes, got %d", w*h, len(frame))
 	}
 
-	src := &grayLuminance{pix: frame, w: FrameWidth, h: FrameHeight}
-
-	// Fixed-threshold binarizer: QR is cleanly rendered with pure black/white pixels,
-	// so histogram analysis is unnecessary — threshold at 128 is optimal and ~3× faster.
-	binarizer := newFixedThresholdBinarizer(src, 128)
-	bmp, err := gozxing.NewBinaryBitmap(binarizer)
+	src := &grayLuminance{pix: frame, w: w, h: h}
+	bmp, err := gozxing.NewBinaryBitmap(newFixedThresholdBinarizer(src, 128))
 	if err != nil {
-		return nil, fmt.Errorf("gr: decode: bitmap: %w", err)
+		return nil, fmt.Errorf("gr: decode: %w", err)
 	}
 
 	hints := map[gozxing.DecodeHintType]interface{}{
@@ -105,7 +171,6 @@ func Decode(frame []byte) ([]byte, error) {
 	reader := gzqr.NewQRCodeReader()
 	result, err := reader.Decode(bmp, hints)
 	if err != nil {
-		// Fallback: GlobalHistogram for slightly distorted frames.
 		bmp2, _ := gozxing.NewBinaryBitmap(gozxing.NewGlobalHistgramBinarizer(src))
 		result, err = reader.Decode(bmp2, nil)
 		if err != nil {
@@ -115,8 +180,34 @@ func Decode(frame []byte) ([]byte, error) {
 	return extractBytes(result), nil
 }
 
-// extractBytes recovers the original binary payload from a decoded QR result.
-// gozxing re-encodes byte-mode segments through charset, so we use BYTE_SEGMENTS metadata.
+// --- package-level convenience wrappers using DefaultConfig ---
+
+var defaultCodec, _ = New(DefaultConfig)
+
+// Encode encodes payload into a 1080×1080 frame using default config (ECC Low).
+func Encode(payload []byte) ([]byte, error) { return defaultCodec.Encode(payload) }
+
+// Decode decodes a 1080×1080 frame using default config.
+func Decode(frame []byte) ([]byte, error) { return defaultCodec.Decode(frame) }
+
+// EncodeBitmap returns a raw bitmap using default config.
+func EncodeBitmap(payload []byte) ([][]bool, error) { return defaultCodec.EncodeBitmap(payload) }
+
+// --- helpers ---
+
+func toRscLevel(ecc ECCLevel) rsciiqr.Level {
+	switch ecc {
+	case ECCHigh:
+		return rsciiqr.H
+	case ECCQuartile:
+		return rsciiqr.Q
+	case ECCMedium:
+		return rsciiqr.M
+	default:
+		return rsciiqr.L
+	}
+}
+
 func extractBytes(result interface {
 	GetResultMetadata() map[gozxing.ResultMetadataType]interface{}
 	GetText() string
@@ -141,7 +232,7 @@ func extractBytes(result interface {
 	return []byte(result.GetText())
 }
 
-// --- gozxing LuminanceSource backed by flat grayscale frame (zero-copy) ---
+// --- gozxing LuminanceSource (zero-copy) ---
 
 type grayLuminance struct {
 	pix  []byte
@@ -150,10 +241,11 @@ type grayLuminance struct {
 
 func (g *grayLuminance) GetWidth() int  { return g.w }
 func (g *grayLuminance) GetHeight() int { return g.h }
+func (g *grayLuminance) GetMatrix() []byte { return g.pix }
 
 func (g *grayLuminance) GetRow(y int, row []byte) ([]byte, error) {
 	if y < 0 || y >= g.h {
-		return nil, fmt.Errorf("gr: row %d out of bounds [0, %d)", y, g.h)
+		return nil, fmt.Errorf("gr: row %d out of bounds", y)
 	}
 	start := y * g.w
 	if len(row) < g.w {
@@ -163,10 +255,7 @@ func (g *grayLuminance) GetRow(y int, row []byte) ([]byte, error) {
 	return row[:g.w], nil
 }
 
-// GetMatrix returns the backing slice directly — zero allocation.
-func (g *grayLuminance) GetMatrix() []byte { return g.pix }
-
-func (g *grayLuminance) IsCropSupported() bool                           { return false }
+func (g *grayLuminance) IsCropSupported() bool                             { return false }
 func (g *grayLuminance) Crop(_, _, _, _ int) (gozxing.LuminanceSource, error) {
 	return nil, fmt.Errorf("gr: crop not supported")
 }
@@ -180,12 +269,9 @@ func (g *grayLuminance) RotateCounterClockwise45() (gozxing.LuminanceSource, err
 func (g *grayLuminance) Invert() gozxing.LuminanceSource {
 	return gozxing.NewInvertedLuminanceSource(g)
 }
-func (g *grayLuminance) String() string {
-	return fmt.Sprintf("GrayLuminance(%dx%d)", g.w, g.h)
-}
+func (g *grayLuminance) String() string { return fmt.Sprintf("GrayLuminance(%dx%d)", g.w, g.h) }
 
-// --- Fixed-threshold binarizer for perfectly rendered QR frames ---
-// Skips histogram analysis — 128 is the optimal threshold for black=0 / white=255 frames.
+// --- fixed-threshold binarizer ---
 
 type fixedThresholdBinarizer struct {
 	src       gozxing.LuminanceSource
@@ -199,7 +285,6 @@ func newFixedThresholdBinarizer(src gozxing.LuminanceSource, threshold int) gozx
 func (b *fixedThresholdBinarizer) GetLuminanceSource() gozxing.LuminanceSource { return b.src }
 func (b *fixedThresholdBinarizer) GetWidth() int                                { return b.src.GetWidth() }
 func (b *fixedThresholdBinarizer) GetHeight() int                               { return b.src.GetHeight() }
-
 func (b *fixedThresholdBinarizer) CreateBinarizer(src gozxing.LuminanceSource) gozxing.Binarizer {
 	return newFixedThresholdBinarizer(src, b.threshold)
 }
@@ -224,17 +309,16 @@ func (b *fixedThresholdBinarizer) GetBlackRow(y int, row *gozxing.BitArray) (*go
 }
 
 func (b *fixedThresholdBinarizer) GetBlackMatrix() (*gozxing.BitMatrix, error) {
-	w := b.src.GetWidth()
-	h := b.src.GetHeight()
+	w, h := b.src.GetWidth(), b.src.GetHeight()
 	matrix, err := gozxing.NewBitMatrix(w, h)
 	if err != nil {
 		return nil, err
 	}
 	lum := b.src.GetMatrix()
 	for y := 0; y < h; y++ {
-		row := y * w
+		base := y * w
 		for x := 0; x < w; x++ {
-			if int(lum[row+x]&0xff) < b.threshold {
+			if int(lum[base+x]&0xff) < b.threshold {
 				matrix.Set(x, y)
 			}
 		}
