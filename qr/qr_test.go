@@ -1,11 +1,11 @@
-package gr_test
+package qr_test
 
 import (
 	"bytes"
 	"crypto/rand"
 	"testing"
 
-	"github.com/zarazaex69/gr"
+	"github.com/zarazaex69/gr/qr"
 )
 
 func randomPayload(n int) []byte {
@@ -17,11 +17,11 @@ func randomPayload(n int) []byte {
 func TestRoundTrip(t *testing.T) {
 	for _, size := range []int{64, 512, 1024, 1500} {
 		payload := randomPayload(size)
-		frame, err := gr.Encode(payload)
+		frame, err := qr.Encode(payload)
 		if err != nil {
 			t.Fatalf("Encode(%d): %v", size, err)
 		}
-		got, err := gr.Decode(frame)
+		got, err := qr.Decode(frame)
 		if err != nil {
 			t.Fatalf("Decode(%d): %v", size, err)
 		}
@@ -33,7 +33,7 @@ func TestRoundTrip(t *testing.T) {
 
 func TestEncodeBitmap(t *testing.T) {
 	payload := randomPayload(100)
-	bmp, err := gr.EncodeBitmap(payload)
+	bmp, err := qr.EncodeBitmap(payload)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,44 +42,41 @@ func TestEncodeBitmap(t *testing.T) {
 	}
 }
 
-// BenchmarkEncode1500 — target: < 8ms
 func BenchmarkEncode1500(b *testing.B) {
 	payload := randomPayload(1500)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := gr.Encode(payload)
+		_, err := qr.Encode(payload)
 		if err != nil {
 			b.Fatal(err)
 		}
 	}
 }
 
-// BenchmarkDecode1500 — target: < 8ms
 func BenchmarkDecode1500(b *testing.B) {
 	payload := randomPayload(1500)
-	frame, err := gr.Encode(payload)
+	frame, err := qr.Encode(payload)
 	if err != nil {
 		b.Fatal(err)
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := gr.Decode(frame)
+		_, err := qr.Decode(frame)
 		if err != nil {
 			b.Fatal(err)
 		}
 	}
 }
 
-// BenchmarkRoundTrip1500 — target: < 16ms (60fps)
 func BenchmarkRoundTrip1500(b *testing.B) {
 	payload := randomPayload(1500)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		frame, err := gr.Encode(payload)
+		frame, err := qr.Encode(payload)
 		if err != nil {
 			b.Fatal(err)
 		}
-		_, err = gr.Decode(frame)
+		_, err = qr.Decode(frame)
 		if err != nil {
 			b.Fatal(err)
 		}

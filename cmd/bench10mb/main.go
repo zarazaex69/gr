@@ -6,22 +6,20 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/zarazaex69/gr"
+	"github.com/zarazaex69/gr/qr"
 )
 
 const (
-	chunkSize    = 2953          // max QR payload at Low ECC
-	targetFPS    = 60
-	frameBudget  = time.Second / targetFPS // 16.67ms
-	totalData    = 10 * 1024 * 1024        // 10 MB
+	chunkSize   = 2953               // max QR payload at Low ECC
+	targetFPS   = 60
+	frameBudget = time.Second / targetFPS // 16.67ms
+	totalData   = 10 * 1024 * 1024        // 10 MB
 )
 
 func main() {
-	// Generate 10 MB of random data
 	data := make([]byte, totalData)
 	rand.Read(data)
 
-	// Split into QR-sized chunks
 	var chunks [][]byte
 	for off := 0; off < len(data); off += chunkSize {
 		end := off + chunkSize
@@ -45,25 +43,22 @@ func main() {
 	)
 
 	for i, chunk := range chunks {
-		// --- Encode ---
 		t0 := time.Now()
-		frame, err := gr.Encode(chunk)
+		frame, err := qr.Encode(chunk)
 		encodeTime := time.Since(t0)
 		if err != nil {
 			fmt.Printf("ENCODE ERROR chunk %d: %v\n", i, err)
 			return
 		}
 
-		// --- Decode ---
 		t1 := time.Now()
-		got, err := gr.Decode(frame)
+		got, err := qr.Decode(frame)
 		decodeTime := time.Since(t1)
 		if err != nil {
 			fmt.Printf("DECODE ERROR chunk %d: %v\n", i, err)
 			return
 		}
 
-		// --- Verify ---
 		if !bytes.Equal(got, chunk) {
 			fmt.Printf("MISMATCH chunk %d (len got=%d want=%d)\n", i, len(got), len(chunk))
 			return
@@ -85,7 +80,6 @@ func main() {
 	avgDecode := totalDecode / time.Duration(n)
 	avgRoundTrip := (totalEncode + totalDecode) / time.Duration(n)
 
-	// Actual achievable fps given average round-trip
 	achievedFPS := float64(time.Second) / float64(avgRoundTrip)
 	throughputMBps := float64(chunkSize) * achievedFPS / 1024 / 1024
 	transferTime10MB := float64(totalData) / (throughputMBps * 1024 * 1024)

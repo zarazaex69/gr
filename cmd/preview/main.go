@@ -9,7 +9,7 @@ import (
 	"image/png"
 	"os"
 
-	"github.com/zarazaex69/gr"
+	"github.com/zarazaex69/gr/qr"
 	"github.com/zarazaex69/gr/tile"
 )
 
@@ -30,17 +30,14 @@ func main() {
 	payload := make([]byte, 1500)
 	rand.Read(payload)
 
-	// --- QR 1500 bytes ---
-	qrFrame, _ := gr.Encode(payload)
+	qrFrame, _ := qr.Encode(payload)
 	savePNG(grayFrameToImage(qrFrame, 1080, 1080), "preview_qr_1500b.png")
 
-	// --- QR small (64 bytes) ---
 	small := make([]byte, 64)
 	rand.Read(small)
-	qrSmall, _ := gr.Encode(small)
+	qrSmall, _ := qr.Encode(small)
 	savePNG(grayFrameToImage(qrSmall, 1080, 1080), "preview_qr_64b.png")
 
-	// --- Tile configs ---
 	configs := []struct {
 		name string
 		cfg  tile.Config
@@ -74,14 +71,12 @@ func main() {
 		savePNG(img, "preview_"+cfg.name+".png")
 		fmt.Printf("  %s: %s\n", cfg.name, c.Info())
 
-		// add to GIF (scale down to 270x270 for file size)
 		scaled := scaleDown(img, 4)
 		palImg := toPaletted(scaled, pal)
 		gifFrames = append(gifFrames, palImg)
-		delays = append(delays, 80) // 0.8s per frame
+		delays = append(delays, 80)
 	}
 
-	// --- GIF animation ---
 	f, _ := os.Create("preview_all.gif")
 	defer f.Close()
 	gif.EncodeAll(f, &gif.GIF{

@@ -1,5 +1,4 @@
-// Package gr provides high-speed QR encode/decode with configurable frame size and ECC level.
-package gr
+package qr
 
 import (
 	"fmt"
@@ -59,7 +58,6 @@ func New(cfg Config) (*Codec, error) {
 }
 
 // MaxPayload returns the approximate maximum payload in bytes for this config.
-// Exact limit depends on QR version selected at encode time.
 func (c *Codec) MaxPayload() int {
 	switch c.cfg.ECC {
 	case ECCHigh:
@@ -76,7 +74,7 @@ func (c *Codec) MaxPayload() int {
 // Info returns a human-readable summary of the codec config.
 func (c *Codec) Info() string {
 	eccName := [...]string{"Low", "Medium", "Quartile", "High"}[c.cfg.ECC]
-	return fmt.Sprintf("gr: frame=%dx%d  margin=%d  ECC=%s  maxPayload=%d bytes",
+	return fmt.Sprintf("qr: frame=%dx%d  margin=%d  ECC=%s  maxPayload=%d bytes",
 		c.cfg.FrameW, c.cfg.FrameH, c.cfg.Margin, eccName, c.MaxPayload())
 }
 
@@ -84,12 +82,12 @@ func (c *Codec) Info() string {
 // 0 = black, 255 = white. QR is centered with quiet zone.
 func (c *Codec) Encode(payload []byte) ([]byte, error) {
 	if len(payload) == 0 {
-		return nil, fmt.Errorf("gr: empty payload")
+		return nil, fmt.Errorf("qr: empty payload")
 	}
 	level := toRscLevel(c.cfg.ECC)
 	code, err := rsciiqr.Encode(string(payload), level)
 	if err != nil {
-		return nil, fmt.Errorf("gr: encode: %w", err)
+		return nil, fmt.Errorf("qr: encode: %w", err)
 	}
 
 	// rsc.io/qr: Black(x,y) valid for x,y in [-4, Size+4)
@@ -156,13 +154,13 @@ func (c *Codec) EncodeBitmap(payload []byte) ([][]bool, error) {
 func (c *Codec) Decode(frame []byte) ([]byte, error) {
 	w, h := c.cfg.FrameW, c.cfg.FrameH
 	if len(frame) != w*h {
-		return nil, fmt.Errorf("gr: decode: expected %d bytes, got %d", w*h, len(frame))
+		return nil, fmt.Errorf("qr: decode: expected %d bytes, got %d", w*h, len(frame))
 	}
 
 	src := &grayLuminance{pix: frame, w: w, h: h}
 	bmp, err := gozxing.NewBinaryBitmap(newFixedThresholdBinarizer(src, 128))
 	if err != nil {
-		return nil, fmt.Errorf("gr: decode: %w", err)
+		return nil, fmt.Errorf("qr: decode: %w", err)
 	}
 
 	hints := map[gozxing.DecodeHintType]interface{}{
@@ -174,7 +172,7 @@ func (c *Codec) Decode(frame []byte) ([]byte, error) {
 		bmp2, _ := gozxing.NewBinaryBitmap(gozxing.NewGlobalHistgramBinarizer(src))
 		result, err = reader.Decode(bmp2, nil)
 		if err != nil {
-			return nil, fmt.Errorf("gr: decode: %w", err)
+			return nil, fmt.Errorf("qr: decode: %w", err)
 		}
 	}
 	return extractBytes(result), nil
@@ -230,98 +228,4 @@ func extractBytes(result interface {
 		}
 	}
 	return []byte(result.GetText())
-}
-
-// --- gozxing LuminanceSource (zero-copy) ---
-
-type grayLuminance struct {
-	pix  []byte
-	w, h int
-}
-
-func (g *grayLuminance) GetWidth() int  { return g.w }
-func (g *grayLuminance) GetHeight() int { return g.h }
-func (g *grayLuminance) GetMatrix() []byte { return g.pix }
-
-func (g *grayLuminance) GetRow(y int, row []byte) ([]byte, error) {
-	if y < 0 || y >= g.h {
-		return nil, fmt.Errorf("gr: row %d out of bounds", y)
-	}
-	start := y * g.w
-	if len(row) < g.w {
-		row = make([]byte, g.w)
-	}
-	copy(row, g.pix[start:start+g.w])
-	return row[:g.w], nil
-}
-
-func (g *grayLuminance) IsCropSupported() bool                             { return false }
-func (g *grayLuminance) Crop(_, _, _, _ int) (gozxing.LuminanceSource, error) {
-	return nil, fmt.Errorf("gr: crop not supported")
-}
-func (g *grayLuminance) IsRotateSupported() bool { return false }
-func (g *grayLuminance) RotateCounterClockwise() (gozxing.LuminanceSource, error) {
-	return nil, fmt.Errorf("gr: rotate not supported")
-}
-func (g *grayLuminance) RotateCounterClockwise45() (gozxing.LuminanceSource, error) {
-	return nil, fmt.Errorf("gr: rotate not supported")
-}
-func (g *grayLuminance) Invert() gozxing.LuminanceSource {
-	return gozxing.NewInvertedLuminanceSource(g)
-}
-func (g *grayLuminance) String() string { return fmt.Sprintf("GrayLuminance(%dx%d)", g.w, g.h) }
-
-// --- fixed-threshold binarizer ---
-
-type fixedThresholdBinarizer struct {
-	src       gozxing.LuminanceSource
-	threshold int
-}
-
-func newFixedThresholdBinarizer(src gozxing.LuminanceSource, threshold int) gozxing.Binarizer {
-	return &fixedThresholdBinarizer{src: src, threshold: threshold}
-}
-
-func (b *fixedThresholdBinarizer) GetLuminanceSource() gozxing.LuminanceSource { return b.src }
-func (b *fixedThresholdBinarizer) GetWidth() int                                { return b.src.GetWidth() }
-func (b *fixedThresholdBinarizer) GetHeight() int                               { return b.src.GetHeight() }
-func (b *fixedThresholdBinarizer) CreateBinarizer(src gozxing.LuminanceSource) gozxing.Binarizer {
-	return newFixedThresholdBinarizer(src, b.threshold)
-}
-
-func (b *fixedThresholdBinarizer) GetBlackRow(y int, row *gozxing.BitArray) (*gozxing.BitArray, error) {
-	w := b.src.GetWidth()
-	if row == nil || row.GetSize() < w {
-		row = gozxing.NewBitArray(w)
-	} else {
-		row.Clear()
-	}
-	lum, err := b.src.GetRow(y, nil)
-	if err != nil {
-		return nil, err
-	}
-	for x := 0; x < w; x++ {
-		if int(lum[x]&0xff) < b.threshold {
-			row.Set(x)
-		}
-	}
-	return row, nil
-}
-
-func (b *fixedThresholdBinarizer) GetBlackMatrix() (*gozxing.BitMatrix, error) {
-	w, h := b.src.GetWidth(), b.src.GetHeight()
-	matrix, err := gozxing.NewBitMatrix(w, h)
-	if err != nil {
-		return nil, err
-	}
-	lum := b.src.GetMatrix()
-	for y := 0; y < h; y++ {
-		base := y * w
-		for x := 0; x < w; x++ {
-			if int(lum[base+x]&0xff) < b.threshold {
-				matrix.Set(x, y)
-			}
-		}
-	}
-	return matrix, nil
 }
