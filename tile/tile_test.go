@@ -10,52 +10,79 @@ import (
 	"github.com/zarazaex69/gr/tile"
 )
 
-func TestRoundTrip(t *testing.T) {
-	for _, size := range []int{1, 100, 1000, tile.MaxPayload} {
-		payload := make([]byte, size)
-		rand.Read(payload)
+func randBytes(n int) []byte {
+	b := make([]byte, n)
+	rand.Read(b)
+	return b
+}
 
-		frame, err := tile.Encode(payload, 0, 1)
+func TestRoundTripDefault(t *testing.T) {
+	c, err := tile.New(tile.DefaultConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("%s", c.Info())
+	for _, size := range []int{1, 100, 1000, c.MaxPayload()} {
+		payload := randBytes(size)
+		frame, err := c.Encode(payload, 42, 100)
 		if err != nil {
 			t.Fatalf("Encode(%d): %v", size, err)
 		}
-		got, err := tile.Decode(frame)
+		got, err := c.Decode(frame)
 		if err != nil {
 			t.Fatalf("Decode(%d): %v", size, err)
 		}
 		if !bytes.Equal(got.Payload, payload) {
-			t.Fatalf("mismatch at size %d", size)
+			t.Fatalf("mismatch size=%d", size)
 		}
 	}
 }
 
-func BenchmarkEncode(b *testing.B) {
-	payload := make([]byte, tile.MaxPayload)
-	rand.Read(payload)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		tile.Encode(payload, uint32(i), 1000)
-	}
-}
-
-func BenchmarkDecode(b *testing.B) {
-	payload := make([]byte, tile.MaxPayload)
-	rand.Read(payload)
-	frame, _ := tile.Encode(payload, 0, 1)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		tile.Decode(frame)
+func TestRoundTripVariousModules(t *testing.T) {
+	for _, mod := range []int{1, 2, 4, 8, 16, 32, 64, 128, 270} {
+		for _, rsPct := range []int{0, 20, 50} {
+			c, err := tile.New(tile.Config{Module: mod, RSPercent: rsPct})
+			if err != nil {
+				t.Logf("module=%d rs=%d%%: skip (%v)", mod, rsPct, err)
+				continue
+			}
+			payload := randBytes(min(c.MaxPayload(), 512))
+			frame, err := c.Encode(payload, 0, 1)
+			if err != nil {
+				t.Fatalf("module=%d rs=%d%% Encode: %v", mod, rsPct, err)
+			}
+			got, err := c.Decode(frame)
+			if err != nil {
+				t.Fatalf("module=%d rs=%d%% Decode: %v", mod, rsPct, err)
+			}
+			if !bytes.Equal(got.Payload, payload) {
+				t.Fatalf("module=%d rs=%d%% mismatch", mod, rsPct)
+			}
+			t.Logf("module=%3dpx  rs=%3d%%  %s", mod, rsPct, c.Info())
+		}
 	}
 }
 
 func TestThroughput10MB(t *testing.T) {
+	configs := []tile.Config{
+		{Module: 1, RSPercent: 0},
+		{Module: 2, RSPercent: 0},
+		{Module: 4, RSPercent: 0},
+		{Module: 4, RSPercent: 20},
+	}
+	for _, cfg := range configs {
+		c, _ := tile.New(cfg)
+		bench10MB(t, c)
+	}
+}
+
+func bench10MB(t *testing.T, c *tile.Codec) {
 	const totalData = 10 * 1024 * 1024
-	data := make([]byte, totalData)
-	rand.Read(data)
+	data := randBytes(totalData)
 
 	var chunks [][]byte
-	for off := 0; off < len(data); off += tile.MaxPayload {
-		end := off + tile.MaxPayload
+	for off := 0; off < len(data); off += c.MaxPayload() {
+		end := off + c.MaxPayload()
 		if end > len(data) {
 			end = len(data)
 		}
@@ -67,17 +94,14 @@ func TestThroughput10MB(t *testing.T) {
 
 	for i, chunk := range chunks {
 		t0 := time.Now()
-		frame, err := tile.Encode(chunk, uint32(i), totalFrames)
+		frame, _ := c.Encode(chunk, uint32(i), totalFrames)
 		encTotal += time.Since(t0)
-		if err != nil {
-			t.Fatalf("frame %d encode: %v", i, err)
-		}
 
 		t1 := time.Now()
-		got, err := tile.Decode(frame)
+		got, err := c.Decode(frame)
 		decTotal += time.Since(t1)
 		if err != nil {
-			t.Fatalf("frame %d decode: %v", i, err)
+			t.Fatalf("frame %d: %v", i, err)
 		}
 		if !bytes.Equal(got.Payload, chunk) {
 			t.Fatalf("frame %d mismatch", i)
@@ -85,19 +109,35 @@ func TestThroughput10MB(t *testing.T) {
 	}
 
 	n := len(chunks)
-	avgEnc := encTotal / time.Duration(n)
-	avgDec := decTotal / time.Duration(n)
-	avgRT := avgEnc + avgDec
+	avgRT := (encTotal + decTotal) / time.Duration(n)
 	fps := float64(time.Second) / float64(avgRT)
-	mbps := float64(tile.MaxPayload) * fps / 1024 / 1024
-	t10 := float64(totalData) / (mbps * 1024 * 1024)
+	mbps := float64(c.MaxPayload()) * fps / 1024 / 1024
 
-	fmt.Printf("\n=== tile 4×4 throughput (%d frames, all ✓) ===\n", n)
-	fmt.Printf("  Payload/frame:  %d bytes (%.1f KB)\n", tile.MaxPayload, float64(tile.MaxPayload)/1024)
-	fmt.Printf("  Avg encode:     %.3fms\n", float64(avgEnc)/1e6)
-	fmt.Printf("  Avg decode:     %.3fms\n", float64(avgDec)/1e6)
-	fmt.Printf("  Avg round-trip: %.3fms\n", float64(avgRT)/1e6)
-	fmt.Printf("  Achieved FPS:   %.1f\n", fps)
-	fmt.Printf("  Throughput:     %.2f MB/s\n", mbps)
-	fmt.Printf("  10 MB in:       %.1f seconds\n", t10)
+	fmt.Printf("%-45s  frames=%-5d  rt=%-8s  fps=%-7.1f  %.2f MB/s  10MB=%.1fs\n",
+		c.Info()[:min(45, len(c.Info()))],
+		n,
+		avgRT.Round(time.Microsecond),
+		fps,
+		mbps,
+		float64(totalData)/float64(c.MaxPayload())/fps,
+	)
+}
+
+func BenchmarkEncode4x4(b *testing.B) {
+	c, _ := tile.New(tile.DefaultConfig)
+	payload := randBytes(c.MaxPayload())
+	b.ResetTimer()
+	for b.Loop() {
+		c.Encode(payload, 0, 1)
+	}
+}
+
+func BenchmarkDecode4x4(b *testing.B) {
+	c, _ := tile.New(tile.DefaultConfig)
+	payload := randBytes(c.MaxPayload())
+	frame, _ := c.Encode(payload, 0, 1)
+	b.ResetTimer()
+	for b.Loop() {
+		c.Decode(frame)
+	}
 }
