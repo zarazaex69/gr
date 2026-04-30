@@ -40,6 +40,7 @@ type Codec struct {
 	frameBytes int // total bytes in data area
 	dataShards int // RS data shards
 	parShards  int // RS parity shards
+	shardSz    int // bytes per shard, sized so wire (data+parity) fits in frame
 	maxPayload int // bytes of user data per frame after header+ECC overhead
 	enc        reedsolomon.Encoder
 }
@@ -69,8 +70,13 @@ func New(cfg Config) (*Codec, error) {
 
 	dataShards, parShards := rsShards(frameBytes-headerSize, cfg.RSPercent)
 
-	shardSize := shardBytes(frameBytes-headerSize, dataShards)
-	maxPayload := dataShards*shardSize - headerSize
+	totalShards := dataShards + parShards
+	shardSz := (frameBytes - headerSize) / totalShards
+	if shardSz < 1 {
+		return nil, fmt.Errorf("tile: module too large for RS config")
+	}
+
+	maxPayload := dataShards*shardSz - headerSize
 	if maxPayload <= 0 {
 		return nil, fmt.Errorf("tile: module too large for RS config")
 	}
@@ -93,6 +99,7 @@ func New(cfg Config) (*Codec, error) {
 		frameBytes: frameBytes,
 		dataShards: dataShards,
 		parShards:  parShards,
+		shardSz:    shardSz,
 		maxPayload: maxPayload,
 		enc:        enc,
 	}, nil
@@ -121,8 +128,7 @@ func (c *Codec) Encode(payload []byte, frameID, totalFrames uint32) ([]byte, err
 		return nil, fmt.Errorf("tile: payload %d > maxPayload %d", len(payload), c.maxPayload)
 	}
 
-	shardSz := shardBytes(c.frameBytes-headerSize, c.dataShards)
-	totalData := c.dataShards * shardSz
+	totalData := c.dataShards * c.shardSz
 
 	raw := make([]byte, totalData+headerSize)
 	binary.BigEndian.PutUint32(raw[0:], magic)
@@ -137,10 +143,10 @@ func (c *Codec) Encode(payload []byte, frameID, totalFrames uint32) ([]byte, err
 
 	var wire []byte
 	if c.parShards > 0 {
-		shards := splitShards(raw, c.dataShards, shardSz)
+		shards := splitShards(raw, c.dataShards, c.shardSz)
 		parity := make([][]byte, c.parShards)
 		for i := range parity {
-			parity[i] = make([]byte, shardSz)
+			parity[i] = make([]byte, c.shardSz)
 		}
 		all := append(shards, parity...)
 		if err := c.enc.Encode(all); err != nil {
