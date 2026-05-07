@@ -65,7 +65,7 @@ func New(cfg Config) (*Codec, error) {
 	frameBytes := (cols * dataRows) / 8
 
 	if frameBytes <= headerSize {
-		return nil, fmt.Errorf("tile: module %d too large — frame holds only %d bytes", cfg.Module, frameBytes)
+		return nil, fmt.Errorf("tile: module %d too large - frame holds only %d bytes", cfg.Module, frameBytes)
 	}
 
 	dataShards, parShards := rsShards(frameBytes-headerSize, cfg.RSPercent)
