@@ -12,21 +12,21 @@ import (
 type ECCLevel int
 
 const (
-	ECCLow      ECCLevel = iota // L — max capacity (~2953 bytes)
-	ECCMedium                   // M — ~25% recovery
-	ECCQuartile                 // Q — ~50% recovery
-	ECCHigh                     // H — ~65% recovery, min capacity (~1273 bytes)
+	ECCLow      ECCLevel = iota // L - max capacity (~2953 bytes)
+	ECCMedium                   // M - ~25% recovery
+	ECCQuartile                 // Q - ~50% recovery
+	ECCHigh                     // H - ~65% recovery, min capacity (~1273 bytes)
 )
 
 // Config configures a QR Codec.
 type Config struct {
-	// FrameW, FrameH — output frame dimensions in pixels. Default: 1080×1080.
+	// FrameW, FrameH - output frame dimensions in pixels. Default: 1080×1080.
 	FrameW, FrameH int
 
-	// Margin — pixel margin around the QR on each side. Default: 20.
+	// Margin - pixel margin around the QR on each side. Default: 20.
 	Margin int
 
-	// ECC — error correction level. Default: ECCLow (max payload).
+	// ECC - error correction level. Default: ECCLow (max payload).
 	ECC ECCLevel
 }
 
