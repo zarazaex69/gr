@@ -17,7 +17,7 @@ const (
 	magic      = uint32(0x544C4532)
 )
 
-// Config configures a Codec instance.
+// Config configures Codec instance.
 type Config struct {
 	// Module is the pixel side of each bit-cell (1..270).
 	// 1 = max density (145KB/frame), 4 = VP8-safe default.
