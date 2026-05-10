@@ -8,15 +8,19 @@ import (
 	"strings"
 
 	"github.com/zarazaex69/gr/qr"
+	"golang.org/x/term"
 )
 
 const (
-	blockFull  = "██"
-	blockEmpty = "  "
+	whiteBG = "\033[107m"
+	blackBG = "\033[40m"
+	blackFG = "\033[30m"
+	reset   = "\033[0m"
 )
 
 func main() {
 	ecc := flag.String("ecc", "L", "error correction level: L, M, Q, H")
+	small := flag.Bool("s", false, "force small (compact) rendering")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: gr [flags] <text>\n       echo <text> | gr [flags]\n\n")
 		flag.PrintDefaults()
@@ -49,24 +53,59 @@ func main() {
 		fatalf("encode: %v", err)
 	}
 
-	printQR(bmp)
+	termW, _, _ := term.GetSize(int(os.Stdout.Fd()))
+	if termW <= 0 {
+		termW = 80
+	}
+
+	// Double-space mode width is len(bmp)*2
+	if *small || len(bmp[0])*2 > termW {
+		printQRCompact(bmp)
+	} else {
+		printQRLarge(bmp)
+	}
 }
 
-func printQR(bmp [][]bool) {
-	border := strings.Repeat(blockEmpty, len(bmp[0])+2)
-	fmt.Println(border)
+func printQRLarge(bmp [][]bool) {
+	fmt.Println()
 	for _, row := range bmp {
-		fmt.Print(blockEmpty)
+		fmt.Print(whiteBG)
 		for _, dark := range row {
 			if dark {
-				fmt.Print(blockFull)
+				fmt.Print(blackBG, "  ")
 			} else {
-				fmt.Print(blockEmpty)
+				fmt.Print(whiteBG, "  ")
 			}
 		}
-		fmt.Println(blockEmpty)
+		fmt.Println(reset)
 	}
-	fmt.Println(border)
+	fmt.Println()
+}
+
+func printQRCompact(bmp [][]bool) {
+	fmt.Println()
+	for y := 0; y < len(bmp); y += 2 {
+		fmt.Print(whiteBG, blackFG)
+		for x := 0; x < len(bmp[y]); x++ {
+			top := bmp[y][x]
+			bottom := false
+			if y+1 < len(bmp) {
+				bottom = bmp[y+1][x]
+			}
+
+			if top && bottom {
+				fmt.Print("█") // Both black
+			} else if top {
+				fmt.Print("▀") // Top black
+			} else if bottom {
+				fmt.Print("▄") // Bottom black
+			} else {
+				fmt.Print(" ") // Both white
+			}
+		}
+		fmt.Println(reset)
+	}
+	fmt.Println()
 }
 
 func parseECC(s string) qr.ECCLevel {
