@@ -14,8 +14,8 @@ func newFixedThresholdBinarizer(src gozxing.LuminanceSource, threshold int) gozx
 }
 
 func (b *fixedThresholdBinarizer) GetLuminanceSource() gozxing.LuminanceSource { return b.src }
-func (b *fixedThresholdBinarizer) GetWidth() int                                { return b.src.GetWidth() }
-func (b *fixedThresholdBinarizer) GetHeight() int                               { return b.src.GetHeight() }
+func (b *fixedThresholdBinarizer) GetWidth() int                               { return b.src.GetWidth() }
+func (b *fixedThresholdBinarizer) GetHeight() int                              { return b.src.GetHeight() }
 func (b *fixedThresholdBinarizer) CreateBinarizer(src gozxing.LuminanceSource) gozxing.Binarizer {
 	return newFixedThresholdBinarizer(src, b.threshold)
 }
