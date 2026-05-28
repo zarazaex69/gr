@@ -68,10 +68,10 @@ func New(cfg Config) (*Codec, error) {
 		return nil, fmt.Errorf("tile: module %d too large - frame holds only %d bytes", cfg.Module, frameBytes)
 	}
 
-	dataShards, parShards := rsShards(frameBytes-headerSize, cfg.RSPercent)
+	dataShards, parShards := rsShards(frameBytes, cfg.RSPercent)
 
 	totalShards := dataShards + parShards
-	shardSz := (frameBytes - headerSize) / totalShards
+	shardSz := frameBytes / totalShards
 	if shardSz < 1 {
 		return nil, fmt.Errorf("tile: module too large for RS config")
 	}
@@ -167,7 +167,7 @@ func (c *Codec) Decode(frame []byte) (*DecodeResult, error) {
 	}
 
 	wire := c.readFrame(frame)
-	shardSz := shardBytes(c.frameBytes-headerSize, c.dataShards)
+	shardSz := c.shardSz
 
 	var raw []byte
 	if c.parShards > 0 {
