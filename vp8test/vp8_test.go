@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/zarazaex69/gr/macro"
 	"github.com/zarazaex69/gr/qr"
 	"github.com/zarazaex69/gr/tile"
 )
@@ -145,13 +146,67 @@ func TestTile_VP8(t *testing.T) {
 	}
 }
 
+func TestMacro_VP8(t *testing.T) {
+	for _, br := range bitrates {
+		name := fmt.Sprintf("%dkbps", br)
+		t.Run(name, func(t *testing.T) {
+			tmp := t.TempDir()
+
+			payloads := make([][]byte, N)
+			raw := make([]byte, 0, W*H*N)
+			for f := range N {
+				p := make([]byte, macro.MaxPayload)
+				rand.Read(p)
+				payloads[f] = p
+				frame, err := macro.Encode(p, uint32(f), uint32(N))
+				if err != nil {
+					t.Fatalf("encode frame %d: %v", f, err)
+				}
+				raw = append(raw, frame...)
+			}
+
+			decoded := vp8Roundtrip(t, tmp, raw, br)
+			if decoded == nil {
+				t.Fatal("vp8 roundtrip failed")
+			}
+
+			ok, fail := 0, 0
+			for f := range N {
+				if (f+1)*W*H > len(decoded) {
+					break
+				}
+				frame := decoded[f*W*H : (f+1)*W*H]
+				res, err := macro.Decode(frame)
+				if err != nil {
+					fail++
+					continue
+				}
+				if string(res.Payload) == string(payloads[f]) {
+					ok++
+				} else {
+					fail++
+				}
+			}
+			rate := float64(ok) / float64(ok+fail) * 100
+			mbps := float64(macro.MaxPayload) * 60 / 1024 / 1024
+			t.Logf("success=%.0f%% (%d/%d) payload=%dB throughput=%.2fMB/s@60fps",
+				rate, ok, ok+fail, macro.MaxPayload, mbps)
+			if rate < 90 {
+				t.Errorf("expected >=90%% success, got %.0f%%", rate)
+			}
+		})
+	}
+}
+
 func vp8Roundtrip(t *testing.T, tmp string, raw []byte, kbps int) []byte {
 	t.Helper()
 	inPath := filepath.Join(tmp, "in.gray")
 	webm := filepath.Join(tmp, "out.webm")
 	outPath := filepath.Join(tmp, "out.gray")
 
-	os.WriteFile(inPath, raw, 0644)
+	if err := os.WriteFile(inPath, raw, 0644); err != nil {
+		t.Fatalf("write raw: %v", err)
+	}
 
 	// encode
 	if err := ffmpeg("-f", "rawvideo", "-pix_fmt", "gray", "-s", "1080x1080", "-r", "60",

@@ -11,7 +11,7 @@ func BenchmarkEncode(b *testing.B) {
 	b.SetBytes(int64(len(payload)))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		c.Encode(payload, uint32(i), 100)
+		_, _ = c.Encode(payload, uint32(i), 100)
 	}
 }
 
@@ -25,6 +25,6 @@ func BenchmarkDecode(b *testing.B) {
 	b.SetBytes(int64(len(payload)))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		c.Decode(frame)
+		_, _ = c.Decode(frame)
 	}
 }

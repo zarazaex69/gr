@@ -21,10 +21,6 @@ func rsShards(dataBytes, pctParity int) (data, parity int) {
 	return data, parity
 }
 
-func shardBytes(totalBytes, dataShards int) int {
-	return (totalBytes + dataShards - 1) / dataShards
-}
-
 func splitShards(data []byte, n, shardSz int) [][]byte {
 	shards := make([][]byte, n)
 	for i := range shards {
